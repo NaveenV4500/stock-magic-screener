@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Screener - Horizontal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body { background: #f8f9fa; font-size: 12px; height: 100vh; display: flex; flex-direction: column; }
+        .top-bar { background: white; border-bottom: 2px solid #dee2e6; padding: 10px 15px; }
+        .filter-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+        .filter-item { background: #fff; border: 1px solid #ced4da; padding: 5px 10px; border-radius: 5px; min-width: 150px; }
+        .table-container { flex: 1; overflow: auto; padding: 15px; }
+        table thead th { position: sticky; top: 0; background: #0d6efd !important; color: white; z-index: 10; }
+        .hidden { display: none; }
+        .stat-box { font-weight: bold; color: #0d6efd; background: #e9ecef; padding: 2px 8px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="top-bar">
+    <div class="d-flex justify-content-between align-items-center">
+        <h6 class="mb-0 fw-bold text-primary">STOCK SCREENER</h6>
+        <div class="d-flex gap-3 align-items-center">
+            <input type="file" id="excelFile" class="form-control form-control-sm" style="width: 250px;">
+            <div id="uploadStatus" class="small fw-bold text-success"></div>
+        </div>
+        <div class="post-upload hidden">
+            <button class="btn btn-success btn-sm me-1" id="btnApply">Apply Filters</button>
+            <button class="btn btn-dark btn-sm" id="btnDownload">Download Excel</button>
+        </div>
+    </div>
+
+    <div class="filter-row post-upload hidden">
+        <div class="btn-group btn-group-sm me-3" role="group">
+            <button class="btn btn-outline-primary" id="btnRule1">Rule 1</button>
+            <button class="btn btn-outline-warning" id="btnRule2">Rule 2 / Retain</button>
+        </div>
+
+        <div class="filter-item">
+            <input class="form-check-input filterCheck" type="checkbox" id="chkMarketCap">
+            <label class="form-check-label fw-bold ms-1" for="chkMarketCap">Market Cap</label>
+            <div class="text-muted" style="font-size: 10px;">> 10,00,00,000</div>
+        </div>
+
+        <div class="filter-item">
+            <input class="form-check-input filterCheck" type="checkbox" id="chkROCE">
+            <label class="form-check-label fw-bold ms-1" for="chkROCE">ROCE %</label>
+            <div class="text-muted rule-val" id="txtROCE" style="font-size: 10px;"></div>
+        </div>
+
+        <div class="filter-item">
+            <input class="form-check-input filterCheck" type="checkbox" id="chkDividend">
+            <label class="form-check-label fw-bold ms-1" for="chkDividend">Div Yield %</label>
+            <div class="text-muted rule-val" id="txtDividend" style="font-size: 10px;"></div>
+        </div>
+
+        <div class="filter-item">
+            <input class="form-check-input filterCheck" type="checkbox" id="chkSalesGrowth">
+            <label class="form-check-label fw-bold ms-1" for="chkSalesGrowth">Sales G%</label>
+            <div class="text-muted rule-val" id="txtSalesGrowth" style="font-size: 10px;"></div>
+        </div>
+
+        <div class="filter-item">
+            <input class="form-check-input filterCheck" type="checkbox" id="chkPE">
+            <label class="form-check-label fw-bold ms-1" for="chkPE">P/E</label>
+            <div class="text-muted rule-val" id="txtPE" style="font-size: 10px;"></div>
+        </div>
+
+        <div class="filter-item border-0 pt-2">
+            <span class="small">Filtered: <span id="filteredStocks" class="stat-box">0</span> / <span id="totalStocks">0</span></span>
+        </div>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered table-striped table-sm" id="stockTable">
+        <thead>
+            <tr>
+                <th>S.No</th><th>Name</th><th>CMP</th><th>Market Cap</th><th>EPS</th><th>ROCE</th><th>Div</th><th>Debt/Eq</th><th>Sales G</th><th>Profit G</th><th>OPM</th><th>P/E</th><th>CMP/BV</th><th>CMP/S</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td colspan="14" class="text-center py-4">Waiting for file upload...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+    let stockData = [];
+    let filteredData = [];
+
+    let rule1 = { MarketCapMin: 10000, MarketCapMax: 5000000000, ROCE: 15, Dividend: 0.5, SalesGrowth: 10, ProfitGrowth: 10, OPM: 15, PE: 25, DebtEq: 1 };
+    let rule2 = { MarketCapMin: 10000, MarketCapMax: 5000000000, ROCE: 6, Dividend: 0.2, SalesGrowth: 0, ProfitGrowth: 0, OPM: 6, PE: 25, DebtEq: 0.7 };
+    let selectedRule = rule1;
+
+    function updateLabels(rule) {
+        $("#txtROCE").text("Above " + rule.ROCE + "%");
+        $("#txtDividend").text("Above " + rule.Dividend + "%");
+        $("#txtSalesGrowth").text("Above " + rule.SalesGrowth + "%");
+        $("#txtPE").text("Below " + rule.PE);
+    }
+
+    function renderTable(data) {
+        let tbody = $("#stockTable tbody").empty();
+        data.forEach((row, i) => {
+            tbody.append(`<tr>
+                <td>${i+1}</td><td>${row.Name}</td><td>${row.CMP}</td><td>${row.MarketCap.toLocaleString()}</td>
+                <td>${row.EPS}</td><td>${row.ROCE}</td><td>${row.DividendYield}</td><td>${row.DebtEq}</td>
+                <td>${row.SalesGrowth}</td><td>${row.ProfitGrowth}</td><td>${row.OPM}</td><td>${row.PE}</td>
+                <td>${row.CMPBV}</td><td>${row.CMP_SALE}</td>
+            </tr>`);
+        });
+        $("#totalStocks").text(stockData.length);
+        $("#filteredStocks").text(data.length);
+    }
+
+    function applyFilters() {
+        if (stockData.length === 0) return;
+        let rule = selectedRule;
+        filteredData = stockData.filter(x => {
+            // STRICT CONDITION: CHECKING ABOVE 10,00,00,000
+            if ($("#chkMarketCap").is(":checked")) {
+                if (x.MarketCap <= 10000) return false;
+            }
+            if ($("#chkROCE").is(":checked") && x.ROCE < rule.ROCE) return false;
+            if ($("#chkDividend").is(":checked") && x.DividendYield < rule.Dividend) return false;
+            if ($("#chkSalesGrowth").is(":checked") && x.SalesGrowth < rule.SalesGrowth) return false;
+            if ($("#chkPE").is(":checked") && x.PE > rule.PE) return false;
+            return true;
+        });
+        renderTable(filteredData);
+    }
+
+    $("#excelFile").change(function (e) {
+        let file = e.target.files[0];
+        if (!file) return;
+        let reader = new FileReader();
+        reader.onload = function (event) {
+            let data = new Uint8Array(event.target.result);
+            let workbook = XLSX.read(data, { type: "array" });
+            let sheet = workbook.Sheets[workbook.SheetNames[0]];
+            let jsonData = XLSX.utils.sheet_to_json(sheet);
+
+            stockData = jsonData.map(x => ({
+                Name: x["Name"] || "", CMP: parseFloat(x["CMP"] || 0),
+                MarketCap: parseFloat(x["Mar_Cap"] || 0), EPS: parseFloat(x["EPS"] || 0),
+                ROCE: parseFloat(x["ROCE"] || 0), DividendYield: parseFloat(x["Div_Yld"] || 0),
+                DebtEq: parseFloat(x["Debt_Eq"] || 0), SalesGrowth: parseFloat(x["Sales_growth"] || 0),
+                ProfitGrowth: parseFloat(x["Profit_growth"] || 0), OPM: parseFloat(x["OPM"] || 0),
+                PE: parseFloat(x["P_E"] || 0), CMPBV: parseFloat(x["CMP_BV"] || 0),
+                CMP_SALE: parseFloat(x["CMP_SALE"] || 0)
+            }));
+
+            $("#uploadStatus").text("✅ File Loaded");
+            $(".post-upload").removeClass("hidden");
+            renderTable(stockData);
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    $("#btnRule1").click(() => { selectedRule = rule1; updateLabels(rule1); applyFilters(); });
+    $("#btnRule2").click(() => { selectedRule = rule2; updateLabels(rule2); applyFilters(); });
+    $("#btnApply").click(applyFilters);
+    $("#btnDownload").click(() => {
+  const isoDateOnly = new Date().toISOString().split('T')[0];
+
+
+        let ws = XLSX.utils.json_to_sheet(filteredData);
+        let wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Filtered");
+        XLSX.writeFile(wb, "Filtered_Stocks_"+isoDateOnly+".xlsx");
+    });
+
+    updateLabels(rule1);
+</script>
+</body>
+</html>
